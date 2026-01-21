@@ -95,30 +95,54 @@ interface ClaudeResponse {
 
 function extractJSON(text: string): string {
   // Remove markdown code blocks
-  let cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '')
+  let cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '')
 
-  // Find JSON object - look for {"name" pattern which is the expected start
-  const startIndex = cleaned.indexOf('{"')
-  if (startIndex === -1) {
-    // Try finding just {
+  // Look for JSON that starts with {"name" (our expected format)
+  const namePattern = /\{\s*"name"\s*:/
+  const match = cleaned.match(namePattern)
+
+  if (!match || match.index === undefined) {
+    // Fallback: try to find any JSON object
     const braceIndex = cleaned.indexOf('{')
     if (braceIndex === -1) {
       throw new Error('No JSON object found in response')
     }
     cleaned = cleaned.substring(braceIndex)
   } else {
-    cleaned = cleaned.substring(startIndex)
+    cleaned = cleaned.substring(match.index)
   }
 
-  // Find the matching closing brace
+  // Find the matching closing brace, accounting for strings
   let depth = 0
   let endIndex = 0
+  let inString = false
+  let escape = false
+
   for (let i = 0; i < cleaned.length; i++) {
-    if (cleaned[i] === '{') depth++
-    if (cleaned[i] === '}') depth--
-    if (depth === 0) {
-      endIndex = i + 1
-      break
+    const char = cleaned[i]
+
+    if (escape) {
+      escape = false
+      continue
+    }
+
+    if (char === '\\') {
+      escape = true
+      continue
+    }
+
+    if (char === '"' && !escape) {
+      inString = !inString
+      continue
+    }
+
+    if (!inString) {
+      if (char === '{') depth++
+      if (char === '}') depth--
+      if (depth === 0 && char === '}') {
+        endIndex = i + 1
+        break
+      }
     }
   }
 
@@ -159,15 +183,24 @@ export async function lookupCompany(companyName: string): Promise<CompanyData> {
     }
   }
 
+  // If no text found, log the response structure for debugging
   if (!fullText) {
-    throw new Error('No text response from Claude')
+    console.error('No text in response. Content blocks:', JSON.stringify(response.content.map(b => b.type)))
+    throw new Error('No text response from Claude - web search may have failed')
   }
 
-  const jsonText = extractJSON(fullText)
-  const parsed: ClaudeResponse = JSON.parse(jsonText)
+  let parsed: ClaudeResponse
+  try {
+    const jsonText = extractJSON(fullText)
+    parsed = JSON.parse(jsonText)
+  } catch (parseError) {
+    console.error('Failed to parse JSON. Full text:', fullText.substring(0, 500))
+    throw new Error(`Failed to parse company data for: ${companyName}`)
+  }
 
   // Validate required fields
   if (!parsed.name) {
+    console.error('No name in parsed response:', JSON.stringify(parsed).substring(0, 500))
     throw new Error(`Could not find company: ${companyName}`)
   }
 
