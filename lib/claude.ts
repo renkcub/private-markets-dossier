@@ -166,14 +166,25 @@ export async function lookupCompany(companyName: string): Promise<CompanyData> {
   const jsonText = extractJSON(fullText)
   const parsed: ClaudeResponse = JSON.parse(jsonText)
 
+  // Validate required fields
+  if (!parsed.name) {
+    throw new Error(`Could not find company: ${companyName}`)
+  }
+
   const companyData: CompanyData = {
     id: normalizeCompanyId(companyName),
     name: parsed.name,
-    description: parsed.description,
-    valuation: parsed.valuation,
+    description: parsed.description || '',
+    valuation: parsed.valuation || {
+      low: 0,
+      high: 0,
+      confidence: 'unknown',
+      sources: ['No valuation data found'],
+      asOf: new Date().toISOString().split('T')[0],
+    },
     updates: parsed.updates || [],
     signals: parsed.signals,
-    status: parsed.status,
+    status: parsed.status || 'unknown',
     lastRefreshed: new Date().toISOString(),
     refreshCount: 1,
   }
