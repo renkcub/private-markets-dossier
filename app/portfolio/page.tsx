@@ -121,12 +121,13 @@ export default function PortfolioPage() {
                 {items.map((item) => (
                   <tr
                     key={item.position.companyId}
-                    className="border-b border-zinc-800/50 hover:bg-zinc-900/50 transition-colors"
+                    className="border-b border-zinc-800/50 hover:bg-zinc-900/50 transition-colors cursor-pointer"
+                    onClick={() => window.location.href = `/portfolio/${item.position.companyId}`}
                   >
                     <td className="py-4">
-                      <span className="text-white font-medium">
+                      <Link href={`/portfolio/${item.position.companyId}`} className="text-white font-medium hover:underline">
                         {item.company?.name || item.position.companyId}
-                      </span>
+                      </Link>
                     </td>
                     <td className="py-4 text-zinc-300">
                       {item.company
