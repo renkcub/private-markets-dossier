@@ -3,24 +3,36 @@ import path from 'path'
 import { CompanyData } from './types'
 import { normalizeCompanyId } from './utils'
 
-const CACHE_FILE = path.join(process.cwd(), 'data', 'cache.json')
+// Use /tmp on Vercel (serverless), local data folder otherwise
+const isVercel = process.env.VERCEL === '1'
+const CACHE_FILE = isVercel
+  ? '/tmp/cache.json'
+  : path.join(process.cwd(), 'data', 'cache.json')
 const CACHE_MAX_AGE_DAYS = 7
 
 interface CacheStore {
   [companyId: string]: CompanyData
 }
 
+// In-memory cache as fallback
+let memoryCache: CacheStore = {}
+
 export async function getCache(): Promise<CacheStore> {
   try {
     const data = await fs.readFile(CACHE_FILE, 'utf-8')
     return JSON.parse(data)
   } catch {
-    return {}
+    return memoryCache
   }
 }
 
 export async function saveCache(cache: CacheStore): Promise<void> {
-  await fs.writeFile(CACHE_FILE, JSON.stringify(cache, null, 2))
+  memoryCache = cache
+  try {
+    await fs.writeFile(CACHE_FILE, JSON.stringify(cache, null, 2))
+  } catch {
+    // Silently fail on read-only systems, use memory cache
+  }
 }
 
 export { normalizeCompanyId }
