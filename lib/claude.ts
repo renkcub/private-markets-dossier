@@ -4,11 +4,11 @@ import { normalizeCompanyId } from './utils'
 
 const client = new Anthropic()
 
-const LOOKUP_PROMPT = `You are researching a private company for an investor.
+const LOOKUP_PROMPT = `You are researching a private company for an investor. Use web search to find the most current information.
 
 Company: {company_name}
 
-Search for the following specific information:
+Search the web for the following specific information:
 
 1. VALUATION
    - Most recent funding round (date, amount, valuation)
@@ -37,7 +37,7 @@ Search for the following specific information:
 Prioritize sources: TechCrunch, Reuters, Bloomberg, The Information,
 SEC filings, company press releases, PitchBook references.
 
-Return JSON only (no markdown, no explanation):
+After searching, return JSON only (no markdown, no explanation):
 {
   "name": "Company Name",
   "description": "One sentence description",
@@ -95,9 +95,17 @@ interface ClaudeResponse {
 export async function lookupCompany(companyName: string): Promise<CompanyData> {
   const prompt = LOOKUP_PROMPT.replace('{company_name}', companyName)
 
+  // Use Claude with web search enabled
   const response = await client.messages.create({
     model: 'claude-sonnet-4-20250514',
-    max_tokens: 2048,
+    max_tokens: 4096,
+    tools: [
+      {
+        type: 'web_search_20250305',
+        name: 'web_search',
+        max_uses: 5,
+      },
+    ],
     messages: [
       {
         role: 'user',
@@ -106,16 +114,25 @@ export async function lookupCompany(companyName: string): Promise<CompanyData> {
     ],
   })
 
-  const textBlock = response.content.find((block) => block.type === 'text')
-  if (!textBlock || textBlock.type !== 'text') {
+  // Find the final text block (after web search results)
+  const textBlocks = response.content.filter((block) => block.type === 'text')
+  const lastTextBlock = textBlocks[textBlocks.length - 1]
+
+  if (!lastTextBlock || lastTextBlock.type !== 'text') {
     throw new Error('No text response from Claude')
   }
 
-  let jsonText = textBlock.text.trim()
+  let jsonText = lastTextBlock.text.trim()
 
   // Remove markdown code blocks if present
   if (jsonText.startsWith('```')) {
     jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
+  }
+
+  // Try to extract JSON from the response
+  const jsonMatch = jsonText.match(/\{[\s\S]*\}/)
+  if (jsonMatch) {
+    jsonText = jsonMatch[0]
   }
 
   const parsed: ClaudeResponse = JSON.parse(jsonText)
