@@ -37,7 +37,7 @@ Search the web for the following specific information:
 Prioritize sources: TechCrunch, Reuters, Bloomberg, The Information,
 SEC filings, company press releases, PitchBook references.
 
-After searching, return JSON only (no markdown, no explanation):
+After searching, return ONLY a valid JSON object (no markdown, no explanation, no text before or after):
 {
   "name": "Company Name",
   "description": "One sentence description",
@@ -61,6 +61,7 @@ After searching, return JSON only (no markdown, no explanation):
 }
 
 RULES:
+- Return ONLY the JSON object, nothing else
 - If no valuation data found, set confidence to "unknown" and explain in sources
 - Use ranges (low/high), not point estimates
 - Include source attribution for every claim
@@ -92,6 +93,42 @@ interface ClaudeResponse {
   status: 'active' | 'acquired' | 'ipo' | 'dead' | 'unknown'
 }
 
+function extractJSON(text: string): string {
+  // Remove markdown code blocks
+  let cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '')
+
+  // Find JSON object - look for {"name" pattern which is the expected start
+  const startIndex = cleaned.indexOf('{"')
+  if (startIndex === -1) {
+    // Try finding just {
+    const braceIndex = cleaned.indexOf('{')
+    if (braceIndex === -1) {
+      throw new Error('No JSON object found in response')
+    }
+    cleaned = cleaned.substring(braceIndex)
+  } else {
+    cleaned = cleaned.substring(startIndex)
+  }
+
+  // Find the matching closing brace
+  let depth = 0
+  let endIndex = 0
+  for (let i = 0; i < cleaned.length; i++) {
+    if (cleaned[i] === '{') depth++
+    if (cleaned[i] === '}') depth--
+    if (depth === 0) {
+      endIndex = i + 1
+      break
+    }
+  }
+
+  if (endIndex === 0) {
+    throw new Error('Could not find complete JSON object')
+  }
+
+  return cleaned.substring(0, endIndex)
+}
+
 export async function lookupCompany(companyName: string): Promise<CompanyData> {
   const prompt = LOOKUP_PROMPT.replace('{company_name}', companyName)
 
@@ -114,27 +151,19 @@ export async function lookupCompany(companyName: string): Promise<CompanyData> {
     ],
   })
 
-  // Find the final text block (after web search results)
-  const textBlocks = response.content.filter((block) => block.type === 'text')
-  const lastTextBlock = textBlocks[textBlocks.length - 1]
+  // Collect all text from the response
+  let fullText = ''
+  for (const block of response.content) {
+    if (block.type === 'text') {
+      fullText += block.text
+    }
+  }
 
-  if (!lastTextBlock || lastTextBlock.type !== 'text') {
+  if (!fullText) {
     throw new Error('No text response from Claude')
   }
 
-  let jsonText = lastTextBlock.text.trim()
-
-  // Remove markdown code blocks if present
-  if (jsonText.startsWith('```')) {
-    jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-  }
-
-  // Try to extract JSON from the response
-  const jsonMatch = jsonText.match(/\{[\s\S]*\}/)
-  if (jsonMatch) {
-    jsonText = jsonMatch[0]
-  }
-
+  const jsonText = extractJSON(fullText)
   const parsed: ClaudeResponse = JSON.parse(jsonText)
 
   const companyData: CompanyData = {
