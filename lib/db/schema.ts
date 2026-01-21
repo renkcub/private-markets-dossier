@@ -7,24 +7,24 @@ export async function createTables() {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       description TEXT,
-      status TEXT DEFAULT 'unknown',
-      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      status TEXT DEFAULT 'active',
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
     )
   `
 
-  // Valuation snapshots (append-only history)
+  // Valuation snapshots (append-only)
   await sql`
     CREATE TABLE IF NOT EXISTS valuation_snapshots (
       id SERIAL PRIMARY KEY,
-      company_id TEXT NOT NULL REFERENCES companies(id),
+      company_id TEXT REFERENCES companies(id),
       valuation_low BIGINT,
       valuation_high BIGINT,
       confidence TEXT,
       sources JSONB,
-      snapshot_type TEXT DEFAULT 'lookup',
-      captured_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-      as_of_date DATE
+      snapshot_type TEXT NOT NULL,
+      as_of_date DATE,
+      captured_at TIMESTAMP DEFAULT NOW()
     )
   `
 
@@ -38,14 +38,14 @@ export async function createTables() {
   await sql`
     CREATE TABLE IF NOT EXISTS funding_events (
       id SERIAL PRIMARY KEY,
-      company_id TEXT NOT NULL REFERENCES companies(id),
-      event_date DATE,
+      company_id TEXT REFERENCES companies(id),
+      event_date DATE NOT NULL,
       event_type TEXT NOT NULL,
-      headline TEXT,
+      headline TEXT NOT NULL,
       valuation BIGINT,
       amount BIGINT,
       source_url TEXT,
-      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      captured_at TIMESTAMP DEFAULT NOW()
     )
   `
 
@@ -60,38 +60,25 @@ export async function createTables() {
     CREATE TABLE IF NOT EXISTS user_positions (
       id SERIAL PRIMARY KEY,
       device_id TEXT NOT NULL,
-      company_id TEXT NOT NULL REFERENCES companies(id),
-      shares DECIMAL,
-      cost_basis DECIMAL,
+      company_id TEXT REFERENCES companies(id),
+      shares NUMERIC,
+      cost_basis NUMERIC,
       notes TEXT,
-      added_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      added_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW(),
       UNIQUE(device_id, company_id)
     )
   `
 
-  // Company updates/news (from lookups)
+  // Employee snapshots (for signals)
   await sql`
-    CREATE TABLE IF NOT EXISTS company_updates (
+    CREATE TABLE IF NOT EXISTS employee_snapshots (
       id SERIAL PRIMARY KEY,
-      company_id TEXT NOT NULL REFERENCES companies(id),
-      update_date DATE,
-      update_text TEXT NOT NULL,
-      update_type TEXT,
-      source_url TEXT,
-      captured_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-    )
-  `
-
-  // Signals snapshots (employee count, hiring, etc.)
-  await sql`
-    CREATE TABLE IF NOT EXISTS signal_snapshots (
-      id SERIAL PRIMARY KEY,
-      company_id TEXT NOT NULL REFERENCES companies(id),
-      employees INTEGER,
-      hiring INTEGER,
-      glassdoor DECIMAL,
-      captured_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      company_id TEXT REFERENCES companies(id),
+      employee_count INTEGER,
+      hiring_count INTEGER,
+      glassdoor_rating NUMERIC,
+      captured_at TIMESTAMP DEFAULT NOW()
     )
   `
 

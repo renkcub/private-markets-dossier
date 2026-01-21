@@ -1,8 +1,6 @@
 import { sql } from '@vercel/postgres'
 import { CompanyData } from '../types'
 
-const CACHE_MAX_AGE_DAYS = 7
-
 // Get company with latest valuation
 export async function getCompany(companyId: string): Promise<CompanyData | null> {
   try {
@@ -25,22 +23,22 @@ export async function getCompany(companyId: string): Promise<CompanyData | null>
       LIMIT 1
     `
 
-    // Get recent updates
-    const updatesResult = await sql`
-      SELECT update_date, update_text, update_type, source_url
-      FROM company_updates
-      WHERE company_id = ${companyId}
-      ORDER BY update_date DESC
-      LIMIT 10
-    `
-
-    // Get latest signals
+    // Get latest employee snapshot for signals
     const signalsResult = await sql`
-      SELECT employees, hiring, glassdoor
-      FROM signal_snapshots
+      SELECT employee_count, hiring_count, glassdoor_rating
+      FROM employee_snapshots
       WHERE company_id = ${companyId}
       ORDER BY captured_at DESC
       LIMIT 1
+    `
+
+    // Get recent funding events as updates
+    const eventsResult = await sql`
+      SELECT event_date, headline, event_type, source_url
+      FROM funding_events
+      WHERE company_id = ${companyId}
+      ORDER BY event_date DESC
+      LIMIT 10
     `
 
     const valuation = valuationResult.rows[0]
@@ -66,17 +64,17 @@ export async function getCompany(companyId: string): Promise<CompanyData | null>
             sources: [],
             asOf: '',
           },
-      updates: updatesResult.rows.map((row) => ({
-        date: row.update_date?.toISOString().split('T')[0] || '',
-        text: row.update_text,
-        type: row.update_type || 'news',
+      updates: eventsResult.rows.map((row) => ({
+        date: row.event_date?.toISOString().split('T')[0] || '',
+        text: row.headline,
+        type: row.event_type || 'news',
         sourceUrl: row.source_url,
       })),
       signals: signals
         ? {
-            employees: signals.employees,
-            hiring: signals.hiring,
-            glassdoor: signals.glassdoor ? Number(signals.glassdoor) : undefined,
+            employees: signals.employee_count,
+            hiring: signals.hiring_count,
+            glassdoor: signals.glassdoor_rating ? Number(signals.glassdoor_rating) : undefined,
           }
         : undefined,
       lastRefreshed: valuation?.captured_at?.toISOString() || company.updated_at?.toISOString() || '',
@@ -123,34 +121,37 @@ export async function saveCompanyData(data: CompanyData): Promise<void> {
     // Insert valuation snapshot (append-only)
     await sql`
       INSERT INTO valuation_snapshots (
-        company_id, valuation_low, valuation_high, confidence, sources, as_of_date
+        company_id, valuation_low, valuation_high, confidence, sources, snapshot_type, as_of_date
       ) VALUES (
         ${data.id},
         ${data.valuation.low},
         ${data.valuation.high},
         ${data.valuation.confidence},
         ${JSON.stringify(data.valuation.sources)},
+        'lookup',
         ${data.valuation.asOf || null}
       )
     `
 
-    // Insert updates (avoid duplicates based on date + text)
+    // Insert funding events from updates (avoid duplicates)
     for (const update of data.updates) {
-      await sql`
-        INSERT INTO company_updates (company_id, update_date, update_text, update_type, source_url)
-        SELECT ${data.id}, ${update.date || null}, ${update.text}, ${update.type}, ${update.sourceUrl || null}
-        WHERE NOT EXISTS (
-          SELECT 1 FROM company_updates
-          WHERE company_id = ${data.id}
-          AND update_text = ${update.text}
-        )
-      `
+      if (update.date && update.text) {
+        await sql`
+          INSERT INTO funding_events (company_id, event_date, event_type, headline, source_url)
+          SELECT ${data.id}, ${update.date}, ${update.type}, ${update.text}, ${update.sourceUrl || null}
+          WHERE NOT EXISTS (
+            SELECT 1 FROM funding_events
+            WHERE company_id = ${data.id}
+            AND headline = ${update.text}
+          )
+        `
+      }
     }
 
-    // Insert signals snapshot
-    if (data.signals) {
+    // Insert employee snapshot
+    if (data.signals && (data.signals.employees || data.signals.hiring || data.signals.glassdoor)) {
       await sql`
-        INSERT INTO signal_snapshots (company_id, employees, hiring, glassdoor)
+        INSERT INTO employee_snapshots (company_id, employee_count, hiring_count, glassdoor_rating)
         VALUES (
           ${data.id},
           ${data.signals.employees || null},
@@ -165,7 +166,7 @@ export async function saveCompanyData(data: CompanyData): Promise<void> {
   }
 }
 
-// Get valuation history for a company
+// Get valuation history for a company (for charting)
 export async function getValuationHistory(companyId: string) {
   const result = await sql`
     SELECT
@@ -178,8 +179,7 @@ export async function getValuationHistory(companyId: string) {
       as_of_date
     FROM valuation_snapshots
     WHERE company_id = ${companyId}
-    ORDER BY captured_at DESC
-    LIMIT 50
+    ORDER BY captured_at ASC
   `
   return result.rows
 }
@@ -187,10 +187,17 @@ export async function getValuationHistory(companyId: string) {
 // Get funding events for a company
 export async function getFundingEvents(companyId: string) {
   const result = await sql`
-    SELECT *
+    SELECT
+      event_date,
+      event_type,
+      headline,
+      valuation,
+      amount,
+      source_url,
+      captured_at
     FROM funding_events
     WHERE company_id = ${companyId}
-    ORDER BY event_date DESC
+    ORDER BY event_date ASC
   `
   return result.rows
 }
